@@ -4,7 +4,7 @@ images:
 - name: quay.io/argoproj/argo-rollouts
   newName: ghcr.io/argoproj-labs/rollouts-plugin-metric-ai
   newTag: latest
-# downloaded from https://github.com/argoproj/argo-rollouts/releases/download/v1.8.3/install.yaml
+# downloaded from https://github.com/argoproj/argo-rollouts/releases/download/v1.9.0/install.yaml
 resources:
 - install.yaml
 - secret.yaml
@@ -39,19 +39,6 @@ patches:
       value:
         name: LOG_LEVEL
         value: "debug"
-    # mount secrets as files
-    - op: add
-      path: /spec/template/spec/volumes/-
-      value:
-        name: secrets
-        secret:
-          secretName: argo-rollouts
-    - op: add
-      path: /spec/template/spec/containers/0/volumeMounts/-
-      value:
-        name: secrets
-        mountPath: /etc/secrets
-        readOnly: true
   target:
     kind: Deployment
     name: argo-rollouts
