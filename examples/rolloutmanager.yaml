@@ -1,0 +1,35 @@
+apiVersion: argoproj.io/v1alpha1
+kind: RolloutManager
+metadata:
+  name: argo-rollouts
+  namespace: argo-rollouts
+spec:
+  # Plugin configuration for AI metric provider
+  plugins:
+    metric:
+      - name: argoproj-labs/metric-ai
+        # Use the GitHub release URL for production deployments
+        location: https://github.com/argoproj-labs/rollouts-plugin-metric-ai/releases/download/v1.9.0/rollouts-plugin-metric-ai-linux-amd64
+        # Or use a container image
+        # location: ghcr.io/argoproj-labs/rollouts-plugin-metric-ai:v1.9.0
+        
+        # For local development, you can use a file path:
+        # location: file://./rollouts-plugin-metric-ai/bin/metric-ai
+        
+        # Optional: Configure plugin-specific settings
+        # args:
+        #   - --log-level=debug
+  
+  # Optional: Additional RolloutManager configuration
+  # env:
+  #   - name: PLUGIN_LOG_LEVEL
+  #     value: debug
+  
+  # Optional: Resource limits for the controller
+  # resources:
+  #   limits:
+  #     cpu: 500m
+  #     memory: 512Mi
+  #   requests:
+  #     cpu: 250m
+  #     memory: 256Mi

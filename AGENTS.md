@@ -7,7 +7,7 @@ This document provides step-by-step instructions for building, deploying, and te
 - Docker installed and running
 - Kind (Kubernetes in Docker) cluster running
 - kubectl configured to access the Kind cluster
-- Go 1.24+ installed
+- Go 1.24.0+ installed (toolchain 1.24.3 recommended)
 - GNU Make installed
 
 ## Available Make Targets
