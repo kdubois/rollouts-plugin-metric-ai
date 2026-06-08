@@ -87,20 +87,20 @@ No LLM configuration needed in the plugin. The agent handles its own model confi
 
 ```mermaid
 sequenceDiagram
-    box rgb(74,144,217) Argo Rollouts
+    box rgb(175, 202, 232) Argo Rollouts
         participant AC as Controller
     end
-    box rgb(91,168,90) Plugin
+    box rgb(152, 213, 151) Plugin
         participant P as Plugin
     end
-    box rgb(139,92,246) Kubernetes Agents
+    box rgb(200, 184, 238) Kubernetes Agents
         participant KA as Agent
         participant DA as Diagnostic Agent
         participant MA as Metrics Agent
         participant AA as Analysis Agent
         participant RA as Remediation Agent
     end
-    box rgb(36,41,47) GitHub
+    box rgb(220, 246, 184) GitHub
         participant GH as GitHub
     end
 
