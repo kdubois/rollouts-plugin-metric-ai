@@ -1,12 +1,39 @@
 ## rollouts-plugin-metric-ai
 
-Standalone Argo Rollouts Metric Provider plugin written in Go. It:
-- Collects stable/canary pod logs in the Rollout namespace
-- **Delegates all AI analysis to an A2A (Agent-to-Agent) agent** - no direct LLM calls
-- The agent autonomously fetches logs and performs structured analysis
-- The agent can create GitHub issues/PRs using its own tools when configured
+Argo Rollouts metric provider plugin written in Go. Collects stable/canary pod logs and delegates AI analysis to an A2A agent. The agent fetches logs autonomously and can create GitHub issues/PRs when configured.
 
-Configuration snippet in argo-rollouts-config ConfigMap:
+## Quick Links
+
+- **Kubernetes Agent**: [kdubois/kubernetes-aiops-agent](https://github.com/kdubois/kubernetes-aiops-agent)
+- **Demo Application**: [argo-rollouts-quarkus-demo](https://github.com/kdubois/argo-rollouts-quarkus-demo)
+
+## Overview
+
+This plugin bridges Argo Rollouts with an autonomous Kubernetes Agent for AI-powered canary analysis. Instead of making direct LLM calls, it sends analysis requests to an agent that debugs pods, analyzes logs and metrics, identifies root causes, and creates GitHub PRs with fixes.
+
+## Installation
+
+### Option 1: RolloutManager (Recommended)
+
+If using the Argo Rollouts Operator with RolloutManager:
+
+```yaml
+apiVersion: argoproj.io/v1alpha1
+kind: RolloutManager
+metadata:
+  name: argo-rollouts
+spec:
+  plugins:
+    metric:
+      - name: argoproj-labs/metric-ai
+        location: https://github.com/argoproj-labs/rollouts-plugin-metric-ai/releases/download/v1.9.0/rollouts-plugin-metric-ai-linux-amd64
+```
+
+Replace `v1.9.0` with the desired release version. See [releases](https://github.com/argoproj-labs/rollouts-plugin-metric-ai/releases) for available versions.
+
+### Option 2: ConfigMap
+
+For manual installation without RolloutManager:
 
 ```yaml
 apiVersion: v1
@@ -19,7 +46,9 @@ data:
       location: "file://./rollouts-plugin-metric-ai/bin/metric-ai"
 ```
 
-Use in an AnalysisTemplate:
+## Configuration
+
+### AnalysisTemplate Example
 
 ```yaml
 apiVersion: argoproj.io/v1alpha1
@@ -32,7 +61,6 @@ spec:
       provider:
         plugin:
           argoproj-labs/metric-ai:
-            # Required: A2A agent URL
             agentUrl: http://kubernetes-agent.argo-rollouts.svc.cluster.local:8080
             stableLabel: role=stable
             canaryLabel: role=canary
@@ -42,76 +70,77 @@ spec:
 
 ## How It Works
 
-The plugin **exclusively** uses the A2A (Agent-to-Agent) protocol to delegate all AI analysis to an autonomous Kubernetes Agent. The agent:
-- **Autonomously fetches logs** using its own Kubernetes tools
-- **Analyzes with structured output** (guaranteed JSON response)
-- **Uses its own LLM** (e.g., Gemini) configured via the agent's environment variables
-- **No direct LLM calls from the plugin** - all AI functionality is delegated to the agent
+The plugin uses the A2A protocol to delegate analysis to the Kubernetes Agent:
 
-An example agent is available at [carlossg/kubernetes-agent](https://github.com/carlossg/kubernetes-agent)
+1. Plugin collects pod labels and namespace information
+2. Sends A2A request to the agent
+3. Agent fetches logs and metrics
+4. Agent analyzes with AI
+5. Agent identifies root causes
+6. Agent returns structured JSON response with promote/rollback decision
+7. Plugin uses result to promote or abort canary
+8. Agent asynchronously creates GitHub PRs with fixes (if needed)
 
-### Configuration Example
+No LLM configuration needed in the plugin. The agent handles its own model configuration, log fetching, and GitHub integration. Remediation happens asynchronously after the rollout decision is made.
 
-```yaml
-apiVersion: argoproj.io/v1alpha1
-kind: AnalysisTemplate
-metadata:
-  name: canary-analysis
-spec:
-  metrics:
-    - name: ai-analysis
-      provider:
-        plugin:
-          argoproj-labs/metric-ai:
-            # Required: Agent URL (must be explicitly configured)
-            agentUrl: http://kubernetes-agent.argo-rollouts.svc.cluster.local:8080
-            # Required: Pod selectors for agent to fetch logs
-            stableLabel: role=stable
-            canaryLabel: role=canary
-            # Optional: Additional context for AI analysis
-            extraPrompt: "Ignore color changes. Consider LoadBalancerNegNotReady a temporary condition."
+### Architecture
+
+```mermaid
+sequenceDiagram
+    box rgb(175, 202, 232) Argo Rollouts
+        participant AC as Controller
+    end
+    box rgb(152, 213, 151) Plugin
+        participant P as Plugin
+    end
+    box rgb(200, 184, 238) Kubernetes Agents
+        participant KA as Agent
+        participant DA as Diagnostic Agent
+        participant MA as Metrics Agent
+        participant AA as Analysis Agent
+        participant RA as Remediation Agent
+    end
+    box rgb(220, 246, 184) GitHub
+        participant GH as GitHub
+    end
+
+    AC->>P: AnalysisRun
+    P->>KA: HTTP POST /a2a/analyze
+    par Collect diagnostics
+        KA->>DA: Fetch logs & pod details
+        DA-->>KA: logs & pod details
+    and Collect metrics
+        KA->>MA: Fetch metrics
+        MA-->>KA: metrics
+    end
+    KA->>AA: Analyze logs, pod details & metrics
+    AA-->>KA: Root cause identification
+    KA-->>P: Return decision (promote/rollback)
+    P-->>AC: Promote or abort canary
+    KA-)RA: Ask for remediation (if needed)
+    alt Operational issue
+        RA-)GH: Create GitHub Issue
+    else Coding issue
+        RA-)GH: Create GitHub PR
+    end
 ```
 
-**Key features:**
-- ✅ **No LLM configuration needed** - Agent uses its own model
-- ✅ **Structured outputs** - Agent returns guaranteed JSON format
-- ✅ **Agent fetches logs** - Uses Kubernetes tools autonomously
-- ✅ **No API keys in plugin** - Agent handles GitHub integration via its own tools
+## Prerequisites
 
-### Prerequisites
+Deploy the Kubernetes Agent in your cluster. See [kdubois/kubernetes-aiops-agent](https://github.com/kdubois/kubernetes-aiops-agent) for an example that runs analysis with logs and metrics
+and root cause identification.
+The agent must be accessible via HTTP from the Argo Rollouts controller.
 
-For the plugin to work, you need:
-
-1. **Kubernetes Agent deployed** in the cluster (see [carlossg/kubernetes-agent](https://github.com/carlossg/kubernetes-agent))
-2. **A2A protocol communication** enabled
-3. **Agent URL** configured in the AnalysisTemplate (required)
-
-**Important:** The analysis will **fail** if:
-- `agentUrl` is not provided in the configuration
-- Kubernetes Agent is not available or health check fails
+Analysis fails if:
+- `agentUrl` is not configured
+- Agent is unavailable or health check fails
 - A2A communication fails
 
-There is no fallback mode - all analysis requires the agent to be available.
-
-### Extra Prompt Feature
-
-The `extraPrompt` parameter allows you to provide additional context to the AI analysis. This text is passed to the Kubernetes Agent and included in the agent's analysis prompt, giving you fine-grained control over what the AI should focus on.
-
-**Use cases:**
-- **Performance focus**: "Focus on response times and throughput metrics"
-- **Error analysis**: "Pay special attention to error rates and exception patterns"
-- **Business context**: "This is a critical payment processing service - prioritize stability"
-- **Technical constraints**: "Consider memory usage patterns and database connection limits"
-- **Ignoring expected changes**: "Ignore color changes in the output"
-
-**Example:**
-```yaml
-extraPrompt: "This is a high-traffic e-commerce service. Focus on error rates, response times, and any database connection issues. Consider the business impact of any failures."
-```
+No fallback mode exists.
 
 ## Configuration Fields
 
-### Plugin Configuration Fields
+### Plugin Configuration
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
@@ -120,32 +149,34 @@ extraPrompt: "This is a high-traffic e-commerce service. Focus on error rates, r
 | `canaryLabel` | string | Yes | Label selector for canary pods (e.g., `role=canary`) |
 | `githubUrl` | string | No | GitHub repository URL for issue creation |
 | `baseBranch` | string | No | Git base branch for issue creation |
-| `extraPrompt` | string | No | Additional context text for AI analysis |
+| `extraPrompt` | string | No | Additional context for AI analysis |
 
-**Notes:**
-- **Required**: `agentUrl`, `stableLabel`, `canaryLabel`
-- **GitHub integration**: Optional, creates issues on failure from plugin side
-- **Namespace detection**: Auto-detects namespace from AnalysisRun, no manual config needed
-- **Agent configuration**: The agent itself configures which LLM to use (e.g., Gemini)
+Namespace is auto-detected from AnalysisRun.
 
 ### Environment Variables
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `GITHUB_TOKEN` | No | GitHub token for issue creation (optional) |
-| `LOG_LEVEL` | No | Log level (`panic`, `fatal`, `error`, `warn`, `info`, `debug`, `trace`). Default: `info` |
+| `LOG_LEVEL` | No | Log level: `panic`, `fatal`, `error`, `warn`, `info`, `debug`, `trace` (default: `info`) |
 
-**Notes:**
-- **No API keys needed**: The plugin does not make direct LLM calls
-- **GitHub token**: Only required if you want the plugin to create GitHub issues on failure
-- **Agent configuration**: The agent has its own environment variables:
-  - `GEMINI_MODEL` or similar for LLM configuration
-  - `GOOGLE_API_KEY` or similar for LLM API access
-  - `GITHUB_TOKEN` for agent-side PR creation (separate from plugin's GitHub integration)
+The plugin doesn't need API keys. The model configuration happens in the agent setup itself.
+
+## Extra Prompt Feature
+
+Pass additional context to the AI via `extraPrompt`:
+
+```yaml
+extraPrompt: "High-traffic e-commerce service. Focus on error rates, response times, and database connections. Consider business impact."
+```
+
+Use cases:
+- Performance focus: "Focus on response times and throughput"
+- Error analysis: "Pay attention to error rates and exceptions"
+- Business context: "Critical payment service - prioritize stability"
+- Technical constraints: "Consider memory usage and connection limits"
+- Ignore expected changes: "Ignore color changes in output"
 
 ## Building
-
-Build locally:
 
 ```bash
 # Build Go binary
@@ -154,52 +185,38 @@ make build
 # Build Docker image
 make docker-build
 
-# Build multi-platform Docker image and push to registry
+# Build multi-platform and push
 make docker-buildx
 ```
 
 ## CI/CD
 
-GitHub Actions automatically builds and publishes Docker images to GitHub Container Registry (ghcr.io) on pushes to main:
-- Images are tagged with the commit SHA
-- Multi-platform builds (amd64, arm64)
-- Available at: `ghcr.io/carlossg/argo-rollouts/rollouts-plugin-metric-ai:<commit-sha>`
+GitHub Actions builds and publishes multi-platform images to `ghcr.io/argoproj-labs/rollouts-plugin-metric-ai:<commit-sha>` on pushes to main.
 
 ## Examples
 
-See `examples/` directory for:
-- Analysis template configuration
-- Argo Rollouts ConfigMap setup
+See `examples/` for analysis templates and ConfigMap setup.
 
-See `config/rollouts-examples/` for complete deployment examples including:
-- Rollout with AI analysis
-- Canary services and ingress
-- Traffic generator for testing
+See `config/rollouts-examples/` for complete deployments with rollouts, services, and traffic generators.
+
+Complete working examples:
+- [argo-rollouts-quarkus-demo](https://github.com/kdubois/argo-rollouts-quarkus-demo) - Demo app with test scenarios
+- [progressive-delivery](https://github.com/kdubois/progressive-delivery) - Full GitOps setup
 
 ## Debugging and Logging
 
-The plugin supports configurable logging levels to help with debugging and monitoring. You can control the log level using the `LOG_LEVEL` environment variable.
+Control log level with `LOG_LEVEL` environment variable.
 
-### Available Log Levels
-
-- `panic`: Only panic level messages
-- `fatal`: Fatal and panic level messages  
-- `error`: Error, fatal, and panic level messages
-- `warn`: Warning, error, fatal, and panic level messages
-- `info`: Info, warning, error, fatal, and panic level messages (default)
-- `debug`: Debug, info, warning, error, fatal, and panic level messages
-- `trace`: All log messages including trace level
+Levels: `panic`, `fatal`, `error`, `warn`, `info` (default), `debug`, `trace`
 
 ### Setting Log Level
 
-#### Via Environment Variable
+Environment variable:
 ```bash
 export LOG_LEVEL=debug
 ```
 
-#### Via Kubernetes Deployment
-Update the Argo Rollouts deployment to include the environment variable:
-
+Kubernetes deployment:
 ```yaml
 apiVersion: apps/v1
 kind: Deployment
@@ -215,81 +232,99 @@ spec:
           value: "debug"
 ```
 
-#### Via Kustomize (recommended)
-The deployment configuration in `config/argo-rollouts/kustomization.yaml` already includes the `LOG_LEVEL` environment variable set to `debug` by default.
+Kustomize: Already configured in `config/argo-rollouts/kustomization.yaml`
 
-### Viewing Plugin Logs
-
-To view the plugin logs with debug information:
+### Viewing Logs
 
 ```bash
-# View all logs
+# All logs
 kubectl logs -f -n argo-rollouts deployment/argo-rollouts
 
-# Filter for plugin-specific logs
+# Plugin-specific
 kubectl logs -n argo-rollouts deployment/argo-rollouts | grep -E "metric-ai|AI metric|plugin"
 
-# View logs with timestamps
+# With timestamps
 kubectl logs -n argo-rollouts deployment/argo-rollouts --timestamps=true
 ```
 
-### Debug Information
-
-When `LOG_LEVEL=debug` or `LOG_LEVEL=trace`, the plugin will log:
-- Detailed configuration parsing
-- Pod log fetching operations
-- A2A agent communication (requests and responses)
+Debug/trace levels log:
+- Configuration parsing
+- Pod log operations
+- A2A communication
 - Agent health checks
-- GitHub API interactions
+- GitHub interactions
 - Performance metrics
 
 ## Troubleshooting
 
 ### Agent Connection Issues
 
-If the plugin cannot connect to the agent, check:
+When using the example agents
 
-1. **Agent URL is configured:**
-   ```bash
-   # Check AnalysisTemplate configuration
-   kubectl get analysistemplate -n <namespace> <template-name> -o yaml | grep agentUrl
-   ```
+Check agent URL:
+```bash
+kubectl get analysistemplate -n <namespace> <template-name> -o yaml | grep agentUrl
+```
 
-2. **Kubernetes Agent is deployed and running:**
-   ```bash
-   kubectl get pods -n argo-rollouts | grep kubernetes-agent
-   kubectl logs -n argo-rollouts deployment/kubernetes-agent
-   ```
+Verify agent is running:
+```bash
+kubectl get pods -n argo-rollouts | grep kubernetes-agent
+kubectl logs -n argo-rollouts deployment/kubernetes-agent
+```
 
-3. **Agent health check:**
-   ```bash
-   # From within cluster
-   curl http://kubernetes-agent.argo-rollouts.svc.cluster.local:8080/a2a/health
-   ```
+Test agent health:
+```bash
+# From cluster
+curl http://kubernetes-agent.argo-rollouts.svc.cluster.local:8080/q/health
 
-4. **Plugin logs for agent communication:**
-   ```bash
-   kubectl logs -n argo-rollouts deployment/argo-rollouts | grep -E "agent|A2A|Attempting to create"
-   ```
+# Port-forward
+kubectl port-forward -n argo-rollouts svc/kubernetes-agent 8080:8080
+curl http://localhost:8080/q/health
+```
+
+**Note**: The agent uses `/q/health` which is the standard Quarkus health endpoint. This provides comprehensive health checks including readiness and liveness probes.
+
+Check plugin logs:
+```bash
+kubectl logs -n argo-rollouts deployment/argo-rollouts | grep -E "agent|A2A|Attempting to create"
+```
 
 ### Common Issues
 
-- **"agentUrl is required in plugin configuration"**: Add `agentUrl` field to your AnalysisTemplate
-- **"Kubernetes Agent health check failed"**: Verify agent is running and accessible at the configured URL
-- **"A2A agent analysis failed"**: Check agent logs and network connectivity
-- **GitHub issue creation skipped**: Check logs for "Skipping GitHub issue creation (githubUrl not configured)"
-- **Namespace auto-detection**: The agent automatically uses the namespace from the AnalysisRun, no manual config needed
+- "agentUrl is required": Add `agentUrl` to AnalysisTemplate
+- "Agent health check failed": Verify agent is running and accessible
+- "A2A agent analysis failed": Check agent logs and network
+- GitHub issue creation skipped: Check for "githubUrl not configured" in logs
+- Namespace auto-detection: Uses namespace from AnalysisRun automatically
 
-# Testing
+For agent-specific issues, see [Kubernetes Agent Troubleshooting](https://github.com/kdubois/kubernetes-aiops-agent#troubleshooting).
+
+## Testing
 
 ```bash
+# Create Kind cluster and run e2e tests
 make test
-```
 
-This will create a Kind cluster and run the e2e tests.
-
-You can also run only the e2e tests locally with:
-
-```bash
+# Run e2e tests only
 make test-e2e
 ```
+
+## Related Projects
+
+- [kubernetes-aiops-agent](https://github.com/kdubois/kubernetes-aiops-agent) - The AI agent
+- [argo-rollouts](https://github.com/argoproj/argo-rollouts) - Progressive delivery controller
+- [argo-rollouts-quarkus-demo](https://github.com/kdubois/argo-rollouts-quarkus-demo) - Demo application
+
+## License
+
+Apache License 2.0
+
+## Contributing
+
+Fork, create feature branch, add tests, submit PR.
+
+## Support
+
+- Plugin issues: [Create issue](https://github.com/argoproj-labs/rollouts-plugin-metric-ai/issues)
+- Agent issues: [Create issue](https://github.com/kdubois/kubernetes-aiops-agent/issues)
+- Documentation: [Agent docs](https://github.com/kdubois/kubernetes-aiops-agent)

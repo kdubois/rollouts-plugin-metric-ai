@@ -7,7 +7,7 @@ This document provides step-by-step instructions for building, deploying, and te
 - Docker installed and running
 - Kind (Kubernetes in Docker) cluster running
 - kubectl configured to access the Kind cluster
-- Go 1.24+ installed
+- Go 1.24.0+ installed (toolchain 1.24.3 recommended)
 - GNU Make installed
 
 ## Available Make Targets
@@ -28,6 +28,16 @@ Common targets:
 - `make fmt` - Format Go code
 - `make vet` - Run Go vet
 - `make lint` - Run linter
+
+## Git Workflow
+
+All commits must be signed off to certify the [Developer Certificate of Origin (DCO)](https://developercertificate.org/). Use the `-s` flag when committing:
+
+```bash
+git commit -s -m "feat: my change"
+```
+
+This adds a `Signed-off-by: Name <email>` trailer to the commit message. PRs with unsigned commits will fail the DCO check.
 
 ## 1. Build the Plugin Image
 
